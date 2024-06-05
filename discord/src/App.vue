@@ -111,9 +111,6 @@
         intervalId: null
       }; 
     },
-    mounted() {
-      this.intervalId = setInterval(this.refreshChannels, 1000);
-    },
     methods: {
       async joinVideoChannel() {
         this.videoOn = true;
@@ -265,6 +262,7 @@
             this.refreshUsers();
             this.refreshChannels();
             this.onlineUserSubscribe();
+            this.intervalId = setInterval(this.refreshChannels, 1000);
           },
           () => {
             this.connectionErrorMessage = 'CONNECTION ERROR';
