@@ -33,11 +33,12 @@
           <div v-for="(channel, idx) in channelList" :key="idx" class="item">
             <h4>{{ channel.channelName }}</h4>
             <div class="buttons">
+              <button v-if="channel.creatorName === username" @click="updateChannel(channel.channelId)">수정</button>
+              <button v-if="channel.creatorName === username" @click="deleteChannel(channel.channelId)">삭제</button>
               <button v-if="currentChannelId !== channel.channelId" @click="subscribeChannel(channel.channelId)">
                 구독
               </button>
               <span v-else>입장 중</span>
-              <button @click="deleteChannel(channel.channelId)">삭제</button>
             </div>
           </div>
         </div>
@@ -101,12 +102,11 @@
         localStream: null,
         remoteStreams:  [],
         peerConnections: {},
-        videoSubscriptionId: null,
         videoOn: false,
-        videoChannelSubscribeId: null,
-        offerSubscribeId : null,
-        answerSubscribeId: null,
-        candidateSubscribeId: null,
+        videoSubscriptionId: null,
+        offerSubscriptionId : null,
+        answerSubscriptionId: null,
+        candidateSubscriptionId: null,
         serverIP: '127.0.0.1',
         intervalId: null
       }; 
@@ -131,17 +131,18 @@
           const answerSubscribe = this.stompClient.subscribe('/topic/answer/' + this.username, this.handleAnswer);
           const candidateSubscribe = this.stompClient.subscribe('/topic/candidate/' + this.username, this.handleCandidate);
 
-          this.videoChannelSubscribeId = videoChannelSubscribe.id;
-          this.offerSubscribeId = offerSubscribe.id;
-          this.answerSubscribeId = answerSubscribe.id;
-          this.candidateSubscribeId = candidateSubscribe.id;
+          this.videoSubscriptionId = videoChannelSubscribe.id;
+          this.offerSubscriptionId = offerSubscribe.id;
+          this.answerSubscriptionId = answerSubscribe.id;
+          this.candidateSubscriptionId = candidateSubscribe.id;
 
           this.stompClient.send('/app/channels/' + this.currentChannelId + '/video/conn', JSON.stringify({
             username: this.username,
             eventType: 'CONNECT'
           }), {});
         } catch (error) {
-          console.error('Error starting call', error);
+          this.videoOn = false;
+          alert('화상 채팅 연결에 실패하였습니다. 다시 시도해주세요.');
         }
       },
       createPeerConnection(peername) {
@@ -177,14 +178,19 @@
 
         if (peername !== this.username) {
           if (JSON.parse(message.body).eventType === "CONNECT") {
-            this.createPeerConnection(peername);
-            const offer = await this.peerConnections[peername].createOffer();
-            this.peerConnections[peername].setLocalDescription(offer);
-            this.stompClient.send('/app/offer', JSON.stringify({
-              sender: this.username,
-              receiver: peername,
-              signal: offer
-            }), {});
+            try {
+              this.createPeerConnection(peername);
+              const offer = await this.peerConnections[peername].createOffer();
+              this.stompClient.send('/app/offer', JSON.stringify({
+                sender: this.username,
+                receiver: peername,
+                signal: offer
+              }), {});
+              this.peerConnections[peername].setLocalDescription(offer);
+            }
+            catch(error) {
+              alert('offer를 전송하는 데 실패하였습니다.');
+            }
           }
           else {
             this.removePeer(peername);
@@ -195,15 +201,20 @@
         const offer = JSON.parse(message.body).signal;
         const peername = JSON.parse(message.body).sender;
 
-        this.createPeerConnection(peername);
-        this.peerConnections[peername].setRemoteDescription(new RTCSessionDescription(offer));
-        const answer = await this.peerConnections[peername].createAnswer();
-        this.peerConnections[peername].setLocalDescription(answer);
-        this.stompClient.send('/app/answer', JSON.stringify({
-          sender: this.username,
-          receiver: peername,
-          signal: answer
-        }), {});
+        try {
+          this.createPeerConnection(peername);
+          this.peerConnections[peername].setRemoteDescription(new RTCSessionDescription(offer));
+          const answer = await this.peerConnections[peername].createAnswer();
+          this.peerConnections[peername].setLocalDescription(answer);
+        
+          this.stompClient.send('/app/answer', JSON.stringify({
+            sender: this.username,
+            receiver: peername,
+            signal: answer
+          }), {});
+        } catch(error) {
+          alert('answer를 전송하는 데 실패하였습니다.');
+        }
       },
       async handleAnswer(message) {
         const answer = JSON.parse(message.body).signal;
@@ -234,15 +245,20 @@
         
         this.remoteStreams = [];
 
-        this.stompClient.unsubscribe(this.videoChannelSubscribeId);
-        this.stompClient.unsubscribe(this.offerSubscribeId);
-        this.stompClient.unsubscribe(this.answerSubscribeId);
-        this.stompClient.unsubscribe(this.candidateSubscribeId);
+        this.stompClient.unsubscribe(this.videoSubscriptionId);
+        this.stompClient.unsubscribe(this.offerSubscriptionId);
+        this.stompClient.unsubscribe(this.answerSubscriptionId);
+        this.stompClient.unsubscribe(this.candidateSubscriptionId);
+
+        this.videoSubscriptionId = null;
+        this.offerSubscriptionId = null;
+        this.answerSubscriptionId = null;
+        this.candidateSubscriptionId = null;
 
         this.stompClient.send('/app/channels/' + this.currentChannelId + '/video/conn', JSON.stringify({
             username: this.username,
             eventType: 'DISCONNECT'
-          }), {});
+        }), {});
 
         this.videoOn = false;
       },
@@ -277,6 +293,9 @@
           .filter(user => user.username !== this.username)
           .map(user => user.username);
           this.userList = userListFromResponse;
+        })
+        .catch(() => {
+          alert('사용자 목록을 불러오는 데 실패하였습니다. 연결을 확인해주세요.');
         });
       },
       refreshChannels() {
@@ -284,34 +303,62 @@
           .then(response => {
             this.channelList = response.data;
 
-            const exists = this.channelList.find(channel => channel.channelId === this.currentChannelId);
+            if (this.currentChannelId) {
+              const exists = this.channelList.find(channel => channel.channelId === this.currentChannelId);
             
-            if (!exists) {
-              this.unsubscribeChannel();
+              if (!exists) {
+                this.unsubscribeChannel();
+              }
             }
+        })
+        .catch(() => {
+          alert('채널 목록을 불러오는 데 실패하였습니다. 연결을 확인해주세요.');
         });
       },
       addChannels() {
         const channelName = prompt('채널명을 입력하세요');
         if (channelName && channelName.trim()) {
-          axios.post('http://'+ this.serverIP + ':8080/channels', { channelName: channelName })
+          axios.post('http://'+ this.serverIP + ':8080/channels', { channelName: channelName, username: this.username })
           .then(response => {
             const newChannel = {
               channelId: response.data.channelId,
-              channelName: channelName
+              channelName: channelName,
+              creatorName: this.username
             }
             this.channelList.push(newChannel);
-        });
+          })
+          .catch(() => {
+            alert('채널 생성에 실패하였습니다. 연결을 확인해주세요.');
+          });
         }
       },
       deleteChannel(channelId) {
         axios.delete('http://'+ this.serverIP + ':8080/channels/' + channelId)
         .then(() => {
           this.channelList = this.channelList.filter(channel => channel.channelId !== channelId);
-          if (channelId == this.currentChannelId) {
+          if (channelId === this.currentChannelId) {
             this.unsubscribeChannel();
           }
         })
+        .catch(() => {
+          alert('채널 삭제에 실패하였습니다. 연결을 확인해주세요.');
+        });
+      },
+      updateChannel(channelId) {
+        const channelName = prompt('변경할 채널명을 입력하세요');
+        if (channelName && channelName.trim()) {
+          axios.put('http://'+ this.serverIP + ':8080/channels/' + channelId, { channelName: channelName })
+          .then(() => {
+            this.channelList.forEach(channel => {
+              if (channel.channelId === channelId) {
+                channel.channelName = channelName;
+              }
+            });
+          })
+          .catch(() => {
+            alert('채널 수정에 실패하였습니다. 연결을 확인해주세요.');
+          });
+        }
       },
       onlineUserSubscribe() {
         this.stompClient.subscribe("/topic/users", res => {
@@ -321,6 +368,7 @@
           }
           else {
             this.userList = this.userList.filter(username => username != message.username);
+            this.removePeer(message.username);
           }
         });
       },
@@ -336,12 +384,14 @@
       },
       unsubscribeChannel() {
         if (this.currentChannelId) {
-          this.stompClient.unsubscribe(this.textSubscriptionId);
-          this.messageList = [];
-
           if (this.videoOn) {
             this.leaveVideoChannel();
           }
+
+          this.stompClient.unsubscribe(this.textSubscriptionId);
+          this.messageList = [];
+          this.currentChannelId = null;
+          this.textSubscriptionId = null;
         }
       },
       sendMessage() {
