@@ -58,9 +58,9 @@
               <video class="local-video" ref="localVideo" autoplay></video>
             </div>
             <div class="remote-videos">
-              <div v-for="(stream, index) in remoteStreams" :key="index" class="remote-video-block">
-                <p> {{ remoteStreams.at(index).peername }} </p>
-                <video :ref="remoteStreams.at(index).peername" autoplay></video>
+              <div v-for="(stream) in remoteStreams" :key="stream.peername" class="remote-video-block">
+                <p> {{ stream.peername }} </p>
+                <video :ref="stream.peername" autoplay></video>
               </div>
             </div>
           </div>
@@ -224,7 +224,14 @@
       async handleCandidate(message) {
         const candidate = JSON.parse(message.body).candidate;
         const peername = JSON.parse(message.body).sender;
-        await this.peerConnections[peername].addIceCandidate(new RTCIceCandidate(candidate));
+        if (this.peerConnections[peername] && this.peerConnections[peername].remoteDescription) {
+          try {
+            this.peerConnections[peername].addIceCandidate(new RTCIceCandidate(candidate));
+          }
+          catch(error) {
+            console.error('addIceCandidate error', error);
+          }
+        }
       },
       removePeer(peername) {
         if (this.peerConnections[peername]) {
