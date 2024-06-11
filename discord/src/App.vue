@@ -270,9 +270,11 @@
         this.videoOn = false;
       },
       handleCamera(){
-        this.localStream.getVideoTracks().forEach((track) => {
-          track.enabled = !track.enabled;
-        });
+        if (this.localStream) {
+          this.localStream.getVideoTracks().forEach((track) => {
+            track.enabled = !track.enabled;
+          });
+        }
       },
       connect() {
         const serverURL = "http://" + this.serverIP + ":8080/ws";
